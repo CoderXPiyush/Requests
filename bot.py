@@ -23,7 +23,7 @@ SUDO_USERS = [5900873171]  # Updated with user ID from log; add other IDs as nee
 
 # Allowed and restricted language codes
 ALLOWED_LANGUAGES = {'en', 'hi', 'bn', 'ta', 'te', 'mr', 'gu', 'ml', 'kn', 'or', 'pa', 'as', 'si'}  # English, Hindi, Bengali, Tamil, Telugu, Marathi, Gujarati, Malayalam, Kannada, Odia, Punjabi, Assamese, Sinhala
-RESTRICTED_LANGUAGES = {'my', 'uz', 'ar'}  # Burmese (Myanmar), Uzbek (Uzbekistan), Arabic
+RESTRICTED_LANGUAGES = {'my', 'uz', 'ar', 'cn'}  # Burmese (Myanmar), Uzbek (Uzbekistan), Arabic
 
 def is_allowed_user(user):
     """Check if user is allowed by analyzing language of each profile field."""
