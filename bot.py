@@ -19,7 +19,7 @@ User = Client(name="AcceptUser", session_string=SESSION)
 running_tasks = {}
 
 # Define sudo users (replace with your actual sudo user IDs or load from config/database)
-SUDO_USERS = [5900873171]  # Example user IDs; replace with actual Telegram user IDs
+SUDO_USERS = [5900873171]  # Updated with user ID from log; add other IDs as needed
 
 # Allowed and restricted language codes
 ALLOWED_LANGUAGES = {'en', 'hi', 'bn', 'ta', 'te', 'mr', 'gu', 'ml', 'kn', 'or', 'pa', 'as', 'si'}  # English, Hindi, Bengali, Tamil, Telugu, Marathi, Gujarati, Malayalam, Kannada, Odia, Punjabi, Assamese, Sinhala
@@ -56,46 +56,12 @@ def is_allowed_user(user):
     logging.info(f"User {user.id} approved (no restricted languages detected)")
     return True  # Approve if no restricted languages are found
 
-@User.on_message(filters.command(["run", "approve"], [".", "/"]) & filters.user(SUDO_USERS))
-async def approve(client, message):
-    chat_id = message.chat.id
-    user_id = message.from_user.id
-    await message.delete()
-
-    if chat_id in running_tasks:
-        await client.send_message(chat_id, "Approval task is already running!")
-        return
-
-    logging.info(f"Starting approval task for chat {chat_id} by sudo user {user_id}")
-    running_tasks[chat_id] = True
-
-    try:
-        # Process existing pending requests
-        async for join_request in client.get_chat_join_requests(chat_id):
-            if not running_tasks.get(chat_id, False):
-                break
-            await handle_join_request(client, join_request)
-            await asyncio.sleep(1)  # Prevent excessive API calls
-    finally:
-        running_tasks.pop(chat_id, None)  # Clean up
-        await client.send_message(chat_id, "**Task Stopped** ✓ **Processed All Pending Join Requests**")
-
-@User.on_message(filters.command(["stop"], [".", "/"]) & filters.user(SUDO_USERS))
-async def stop_approve(client, message):
-    chat_id = message.chat.id
-    user_id = message.from_user.id
-    await message.delete()
-
-    if chat_id not in running_tasks:
-        await client.send_message(chat_id, "No approval task is running!")
-        return
-
-    running_tasks[chat_id] = False
-    logging.info(f"Stopping approval task for chat {chat_id} by sudo user {user_id}")
-    await client.send_message(chat_id, "Approval task stopped!")
-
 @User.on_chat_join_request()
-async def handle_join_request(client, join_request: ChatJoinRequest):
+async def handle_join_request(client, join_request):
+    if not isinstance(join_request, ChatJoinRequest):
+        logging.error(f"Invalid join request object for user {join_request.from_user.id}: {type(join_request)}")
+        return
+
     chat_id = join_request.chat.id
     user = join_request.from_user
     
@@ -114,6 +80,49 @@ async def handle_join_request(client, join_request: ChatJoinRequest):
         await asyncio.sleep(e.value)
     except Exception as e:
         logging.error(f"Error processing join request for user {user.id}: {e}")
+
+@User.on_message(filters.command(["run", "approve"], [".", "/"]) & filters.user(SUDO_USERS))
+async def approve(client, message):
+    chat_id = message.chat.id
+    user_id = message.from_user.id
+    await message.delete()
+
+    if chat_id in running_tasks:
+        await client.send_message(chat_id, "Approval task is already running!")
+        return
+
+    logging.info(f"Starting approval task for chat {chat_id} by sudo user {user_id}")
+    running_tasks[chat_id] = True
+
+    try:
+        # Process existing pending requests
+        async for join_request in client.get_chat_join_requests(chat_id):
+            if not running_tasks.get(chat_id, False):
+                break
+            if not isinstance(join_request, ChatJoinRequest):
+                logging.error(f"Invalid join request object in chat {chat_id}: {type(join_request)}")
+                continue
+            await handle_join_request(client, join_request)
+            await asyncio.sleep(1)  # Prevent excessive API calls
+    except Exception as e:
+        logging.error(f"Error processing pending join requests in chat {chat_id}: {e}")
+    finally:
+        running_tasks.pop(chat_id, None)  # Clean up
+        await client.send_message(chat_id, "**Task Stopped** ✓ **Processed All Pending Join Requests**")
+
+@User.on_message(filters.command(["stop"], [".", "/"]) & filters.user(SUDO_USERS))
+async def stop_approve(client, message):
+    chat_id = message.chat.id
+    user_id = message.from_user.id
+    await message.delete()
+
+    if chat_id not in running_tasks:
+        await client.send_message(chat_id, "No approval task is running!")
+        return
+
+    running_tasks[chat_id] = False
+    logging.info(f"Stopping approval task for chat {chat_id} by sudo user {user_id}")
+    await client.send_message(chat_id, "Approval task stopped!")
 
 logging.info("Bot Started...")
 User.run()
