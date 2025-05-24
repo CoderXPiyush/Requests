@@ -115,6 +115,9 @@ async def approve(client, message):
                 else:
                     # Handle potential ChatJoiner or other objects
                     chat_id_inner = getattr(join_request, 'chat_id', None)
+                    if chat_id_inner is None:
+                        logging.error(f"Skipping join request with missing chat_id: {type(join_request)}, user_id: {getattr(join_request, 'from_user', None)}")
+                        continue
                     if chat_id_inner != chat_id:
                         logging.error(f"Mismatched chat_id in join request: expected {chat_id}, got {chat_id_inner}")
                         continue
