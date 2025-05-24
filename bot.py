@@ -23,7 +23,7 @@ SUDO_USERS = [5900873171]  # Updated with user ID from log; add other IDs as nee
 
 # Allowed and restricted language codes
 ALLOWED_LANGUAGES = {'en', 'hi', 'bn', 'ta', 'te', 'mr', 'gu', 'ml', 'kn', 'or', 'pa', 'as', 'si'}  # English, Hindi, Bengali, Tamil, Telugu, Marathi, Gujarati, Malayalam, Kannada, Odia, Punjabi, Assamese, Sinhala
-RESTRICTED_LANGUAGES = {'my', 'uz', 'ar', 'cn'}  # Burmese (Myanmar), Uzbek (Uzbekistan), Arabic
+RESTRICTED_LANGUAGES = {'my', 'uz', 'ar'}  # Burmese (Myanmar), Uzbek (Uzbekistan), Arabic
 
 def is_allowed_user(user):
     """Check if user is allowed by analyzing language of each profile field."""
@@ -47,8 +47,8 @@ def is_allowed_user(user):
             logging.info(f"Detected language for user {user.id} in {field_name}: {detected_lang}")
             
             if detected_lang in RESTRICTED_LANGUAGES:
-                logging.info(f"User {user.id} declined due to restricted language in {field_name}: {detected_lang}")
-                return False  # Decline if any field is in a restricted language
+                logging.info(f"User {user.id} skipped due to restricted language in {field_name}: {detected_lang}")
+                return False  # Skip if any field is in a restricted language
         except LangDetectException:
             logging.info(f"Could not detect language for user {user.id} in {field_name}, treating as non-restricted")
             continue  # Treat undetectable fields as non-restricted
@@ -58,13 +58,23 @@ def is_allowed_user(user):
 
 @User.on_chat_join_request()
 async def handle_join_request(client, join_request):
-    if not isinstance(join_request, ChatJoinRequest):
-        logging.error(f"Invalid join request object for user {join_request.from_user.id}: {type(join_request)}")
+    # Handle different join request object types
+    try:
+        if isinstance(join_request, ChatJoinRequest):
+            chat_id = join_request.chat.id
+            user = join_request.from_user
+        else:
+            # Handle potential ChatJoiner or other objects (Pyrogram 2.0.106)
+            chat_id = getattr(join_request, 'chat_id', None)
+            user = getattr(join_request, 'from_user', None)
+            if not chat_id or not user:
+                logging.error(f"Invalid join request object: {type(join_request)}, missing chat_id or from_user")
+                return
+
+    except AttributeError as e:
+        logging.error(f"Error accessing join request attributes: {e}")
         return
 
-    chat_id = join_request.chat.id
-    user = join_request.from_user
-    
     if not running_tasks.get(chat_id, False):
         return  # Only process join requests if approval task is running
 
@@ -73,8 +83,8 @@ async def handle_join_request(client, join_request):
             await client.approve_chat_join_request(chat_id, user.id)
             logging.info(f"Approved join request for user {user.id} in chat {chat_id}")
         else:
-            await client.decline_chat_join_request(chat_id, user.id)
-            logging.info(f"Declined join request for user {user.id} in chat {chat_id} (restricted language detected)")
+            logging.info(f"Skipped join request for user {user.id} in chat {chat_id} (restricted language detected)")
+            # Do not decline, just skip the request
     except FloodWait as e:
         logging.info(f"FloodWait: Sleeping for {e.value} seconds")
         await asyncio.sleep(e.value)
@@ -99,11 +109,20 @@ async def approve(client, message):
         async for join_request in client.get_chat_join_requests(chat_id):
             if not running_tasks.get(chat_id, False):
                 break
-            if not isinstance(join_request, ChatJoinRequest):
-                logging.error(f"Invalid join request object in chat {chat_id}: {type(join_request)}")
+            try:
+                if isinstance(join_request, ChatJoinRequest):
+                    await handle_join_request(client, join_request)
+                else:
+                    # Handle potential ChatJoiner or other objects
+                    chat_id_inner = getattr(join_request, 'chat_id', None)
+                    if chat_id_inner != chat_id:
+                        logging.error(f"Mismatched chat_id in join request: expected {chat_id}, got {chat_id_inner}")
+                        continue
+                    await handle_join_request(client, join_request)
+                await asyncio.sleep(1)  # Prevent excessive API calls
+            except AttributeError as e:
+                logging.error(f"Invalid join request object in chat {chat_id}: {type(join_request)}, error: {e}")
                 continue
-            await handle_join_request(client, join_request)
-            await asyncio.sleep(1)  # Prevent excessive API calls
     except Exception as e:
         logging.error(f"Error processing pending join requests in chat {chat_id}: {e}")
     finally:
