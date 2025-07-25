@@ -1,5 +1,6 @@
 import logging
 import asyncio
+import re
 from os import environ
 from pyrogram import Client, filters
 from pyrogram.errors import FloodWait
@@ -16,6 +17,19 @@ User = Client(name="AcceptUser", session_string=SESSION)
 # Store running tasks to allow stopping
 running_tasks = {}
 
+# Regular expression to detect URLs (including Telegram t.me links)
+URL_PATTERN = re.compile(r'(?:http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+|t\.me/(?:[a-zA-Z0-9_+]+))')
+
+async def has_links_in_bio(client, user_id):
+    try:
+        user = await client.get_users(user_id)
+        if user.bio:
+            return bool(URL_PATTERN.search(user.bio))
+        return False
+    except Exception as e:
+        logging.error(f"Error checking user bio for {user_id}: {e}")
+        return False
+
 @User.on_message(filters.command(["run", "approve"], [".", "/"]))
 async def approve(client, message):
     chat_id = message.chat.id
@@ -31,7 +45,13 @@ async def approve(client, message):
     try:
         while running_tasks.get(chat_id, False):
             try:
-                await client.approve_all_chat_join_requests(chat_id)
+                join_requests = await client.get_chat_join_requests(chat_id)
+                for request in join_requests:
+                    if not await has_links_in_bio(client, request.user.id):
+                        await client.approve_chat_join_request(chat_id, request.user.id)
+                        logging.info(f"Approved user {request.user.id} in chat {chat_id}")
+                    else:
+                        logging.info(f"Skipped user {request.user.id} due to links in bio")
                 await asyncio.sleep(1)  # Prevent excessive API calls
             except FloodWait as e:
                 logging.info(f"FloodWait: Sleeping for {e.value} seconds")
@@ -41,7 +61,7 @@ async def approve(client, message):
                 await asyncio.sleep(1)  # Avoid rapid error loops
     finally:
         running_tasks.pop(chat_id, None)  # Clean up
-        await client.send_message(chat_id, "**Task Stopped** ✓ **Approved All Pending Join Requests**")
+        await client.send_message(chat_id, "**Task Stopped** ✓ **Approved All Eligible Pending Join Requests**")
 
 @User.on_message(filters.command(["stop"], [".", "/"]))
 async def stop_approve(client, message):
