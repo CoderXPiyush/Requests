@@ -4,6 +4,7 @@ import re
 from os import environ
 from pyrogram import Client, filters
 from pyrogram.errors import FloodWait
+from langdetect import detect, LangDetectException
 
 # Configure logging for errors and info
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -30,6 +31,20 @@ async def has_links_in_bio(client, user_id):
         logging.error(f"Error checking user bio for {user_id}: {e}")
         return False
 
+async def is_bio_english(client, user_id):
+    """Check if the user's bio is in English using langdetect."""
+    try:
+        user = await client.get_users(user_id)
+        if user.bio:
+            return detect(user.bio) == 'en'
+        return True  # Treat empty bio as acceptable
+    except LangDetectException as e:
+        logging.warning(f"Language detection failed for user {user_id}: {e}")
+        return True  # Allow user if language detection fails
+    except Exception as e:
+        logging.error(f"Error checking user bio language for {user_id}: {e}")
+        return True
+
 @User.on_message(filters.command(["run", "approve"], [".", "/"]))
 async def approve(client, message):
     chat_id = message.chat.id
@@ -45,13 +60,17 @@ async def approve(client, message):
     try:
         while running_tasks.get(chat_id, False):
             try:
-                join_requests = await client.get_chat_join_requests(chat_id)
-                for request in join_requests:
-                    if not await has_links_in_bio(client, request.user.id):
-                        await client.approve_chat_join_request(chat_id, request.user.id)
-                        logging.info(f"Approved user {request.user.id} in chat {chat_id}")
-                    else:
-                        logging.info(f"Skipped user {request.user.id} due to links in bio")
+                async for request in client.get_chat_join_requests(chat_id):
+                    user_id = request.user.id
+                    if await has_links_in_bio(client, user_id):
+                        logging.info(f"Skipped user {user_id} due to links in bio")
+                        continue
+                    # Optional: Uncomment the following lines to enable English-only bio filtering
+                    # if not await is_bio_english(client, user_id):
+                    #     logging.info(f"Skipped user {user_id} due to non-English bio")
+                    #     continue
+                    await client.approve_chat_join_request(chat_id, user_id)
+                    logging.info(f"Approved user {user_id} in chat {chat_id}")
                 await asyncio.sleep(1)  # Prevent excessive API calls
             except FloodWait as e:
                 logging.info(f"FloodWait: Sleeping for {e.value} seconds")
